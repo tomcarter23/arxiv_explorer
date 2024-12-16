@@ -1,0 +1,25 @@
+services:
+  mongo-clean:
+    image: mongo:4.4.18
+    profiles:
+      - process
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "username"
+      MONGO_INITDB_ROOT_PASSWORD: "password"
+    volumes:
+      - ./output_data:/data/output_data
+
+  run-process:
+    profiles:
+      - process
+    build:
+      context: .
+      dockerfile: Dockerfile.process
+    environment:
+      MONGODB_URL: "mongodb://username:password@mongo-clean:27017/default?authSource=admin"
+    depends_on:
+      - mongo-clean
+    volumes:
+      - ./input_data:/data/input_data
+      - ./output_data:/data/output_data
+    command: $PROCESS_ARGS

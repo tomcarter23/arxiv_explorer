@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import os
 import faiss
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -8,9 +9,11 @@ from tqdm import tqdm
 import argparse
 from sentence_transformers import SentenceTransformer
 
+from arxiv_explorer.mongo_utils import collection_to_json
+
 logger = logging.getLogger(__name__)
 
-dataset_path = "/Users/tomcarter/.cache/kagglehub/datasets/Cornell-University/arxiv/versions/207/arxiv-metadata-oai-snapshot.json"
+MONGODB_URL = os.getenv("MONGODB_URL")
 
 
 class DataHandler:
@@ -69,7 +72,7 @@ def setup_logging(level: str):
     logger.setLevel(level)
 
 
-def process_and_save(dataset_path: str, embedding_model: SentenceTransformer, faiss_index: faiss.Index, mongo_collection: Collection, num_to_proces: int = -1, index_path: str = "./faiss_index.faiss") -> None:
+def process_and_save(dataset_path: str, embedding_model: SentenceTransformer, faiss_index: faiss.Index, mongo_collection: Collection, output_path: str, num_to_proces: int = -1) -> None:
     dh = DataHandler(
         dataset=dataset_path,
         embedding_model=embedding_model,
@@ -77,7 +80,7 @@ def process_and_save(dataset_path: str, embedding_model: SentenceTransformer, fa
         mongo_collection=mongo_collection,
         num_to_proces=num_to_proces,
     )
-    dh.process_and_save(index_path=index_path)
+    dh.process_and_save(index_path=output_path)
 
 
 def main() -> None:
@@ -95,24 +98,57 @@ def main() -> None:
         default="-1",
         help=f"Number of documents to process. Default is -1, which processes all documents.",
     )
+    parser.add_argument(
+        "--transformer",
+        "-t",
+        default="all-MiniLM-L6-v2",
+        help=f"Huggingface SentenceTransformer to use to calculate embeddings.",
+    )
+    parser.add_argument(
+        "--mongo-db-col",
+        "-mdc",
+        default="arxivdb:arxivcol",
+        help=f"String defining MongoDB database and collection to "
+             f"save documents to. In the format <database>:<collection>.",
+    )
+    parser.add_argument(
+        "--dataset",
+        "-d",
+        help=f"Path to Arxiv abstracts dataset to process."
+    )
+    parser.add_argument(
+        "--faiss-output",
+        "-fo",
+        help=f"Path to save Faiss index to."
+    )
+    parser.add_argument(
+        "--database-output",
+        "-do",
+        help=f"Path to save Mongo Collection index to JSON."
+    )
 
     args = parser.parse_args()
 
     setup_logging(level=args.log)
 
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    embedding_model = SentenceTransformer(args.transformer)
     faiss_index = faiss.IndexIDMap(faiss.IndexFlatL2(embedding_model.get_sentence_embedding_dimension()))
-    mongo_client = MongoClient("mongodb://localhost:27017/")
-    mongo_collection = mongo_client["arxivdb"]["arxivcol"]
-    dataset_path = "/Users/tomcarter/.cache/kagglehub/datasets/Cornell-University/arxiv/versions/207/arxiv-metadata-oai-snapshot.json"
+    mongo_client = MongoClient(MONGODB_URL)
+    database, collection = args.mongo_db_col.split(":")
+    mongo_collection = mongo_client[database][collection]
+    dataset_path = args.dataset
 
     process_and_save(
         dataset_path=dataset_path,
         embedding_model=embedding_model,
         faiss_index=faiss_index,
         mongo_collection=mongo_collection,
+        output_path=args.faiss_output,
         num_to_proces=int(args.n),
     )
+
+    if args.database_output:
+        collection_to_json(mongo_collection, args.database_output)
 
 
 if __name__ == "__main__":
